@@ -12,9 +12,10 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
-
-#define CAN_ID 274
 #define BUFFER_SIZE 128
+#define BEAGLE_ID 274
+#define CAN_ID_1 475
+#define CAN_ID_2 288
 
 int sock;
 int pipe_fd[2];
@@ -29,7 +30,7 @@ void setup_can_socket() {
         exit(1);
     }
 
-    strcpy(ifr.ifr_name, "vcan0"); // Utiliser vcan0 pour le test
+    strcpy(ifr.ifr_name, "can0"); // Utiliser can0 pour le test physique
     ioctl(sock, SIOCGIFINDEX, &ifr);
 
     addr.can_family  = AF_CAN;
@@ -41,13 +42,13 @@ void setup_can_socket() {
     }
 }
 
-void send_can_message() {
+void send_can_message(int can_id) {
     struct can_frame frame;
-    frame.can_id = CAN_ID;
+    frame.can_id = BEAGLE_ID;
     frame.can_dlc = 8; // Longueur des données
     memset(frame.data, 0, sizeof(frame.data)); // Remplir avec des données si nécessaire
 
-    printf("Envoi du message CAN avec ID %d\n", CAN_ID);
+    printf("Envoi du message CAN avec ID %d\n", BEAGLE_ID);
     if (write(sock, &frame, sizeof(frame)) != sizeof(frame)) {
         perror("Echec d'envoi du message");
     }
@@ -58,13 +59,16 @@ void receive_can_message() {
     while (1) {
         int nbytes = read(sock, &frame, sizeof(frame));
         if (nbytes > 0) {
-            printf("Message reçu avec ID %d: ", frame.can_id);
-            for (int i = 0; i < frame.can_dlc; i++) {
-                printf("%02X ", frame.data[i]);
+            // Filtrer par ID pour 475 et 288
+            if (frame.can_id == CAN_ID_1 || frame.can_id == CAN_ID_2) {
+                printf("Message reçu avec ID %d: ", frame.can_id);
+                for (int i = 0; i < frame.can_dlc; i++) {
+                    printf("%02X ", frame.data[i]);
+                }
+                printf("\n");
+                // Transfert au processus père
+                write(pipe_fd[1], &frame, sizeof(frame));
             }
-            printf("\n");
-            // Transfert au processus père
-            write(pipe_fd[1], &frame, sizeof(frame));
         }
     }
 }
@@ -116,16 +120,24 @@ int main() {
         }
 
         while (1) {
-            printf("1. Envoyer un message CAN\n");
-            printf("2. Quitter\n");
+            printf("1. Envoyer un message CAN (ID 475)\n");
+            printf("2. Envoyer un message CAN (ID 288)\n");
+            printf("3. Quitter\n");
             printf("Choisissez une option: ");
             scanf("%d", &choice);
 
-            if (choice == 1) {
-                send_can_message();
-            } else if (choice == 2) {
-                kill(pid, SIGINT);
-                break;
+            switch (choice) {
+                case 1:
+                    send_can_message(CAN_ID_1);
+                    break;
+                case 2:
+                    send_can_message(CAN_ID_2);
+                    break;
+                case 3:
+                    kill(pid, SIGINT);
+                    break;
+                default:
+                    printf("Option invalide.\n");
             }
         }
     } else {
