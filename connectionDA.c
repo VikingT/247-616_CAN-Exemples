@@ -13,10 +13,11 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
-
 #define CAN_ID 274
+#define BUFFER_SIZE 128
 
 int sock;
+int pipe_fd[2];
 
 void setup_can_socket() {
     struct sockaddr_can addr;
@@ -28,7 +29,7 @@ void setup_can_socket() {
         exit(1);
     }
 
-    strcpy(ifr.ifr_name, "can0");
+    strcpy(ifr.ifr_name, "vcan0"); // Utiliser vcan0 pour le test
     ioctl(sock, SIOCGIFINDEX, &ifr);
 
     addr.can_family  = AF_CAN;
@@ -62,17 +63,41 @@ void receive_can_message() {
                 printf("%02X ", frame.data[i]);
             }
             printf("\n");
+            // Transfert au processus père
+            write(pipe_fd[1], &frame, sizeof(frame));
+        }
+    }
+}
+
+void handle_received_message() {
+    struct can_frame frame;
+    while (1) {
+        int nbytes = read(pipe_fd[0], &frame, sizeof(frame));
+        if (nbytes > 0) {
+            printf("Message transféré par le fils avec ID %d: ", frame.can_id);
+            for (int i = 0; i < frame.can_dlc; i++) {
+                printf("%02X ", frame.data[i]);
+            }
+            printf("\n");
         }
     }
 }
 
 void sigint_handler(int signo) {
     close(sock);
+    close(pipe_fd[0]);
+    close(pipe_fd[1]);
     exit(0);
 }
 
 int main() {
     setup_can_socket();
+
+    // Création du pipe
+    if (pipe(pipe_fd) == -1) {
+        perror("Echec de création du pipe");
+        exit(1);
+    }
 
     // Gestion du signal SIGINT
     signal(SIGINT, sigint_handler);
@@ -83,9 +108,14 @@ int main() {
         // Processus fils : réception des messages
         receive_can_message();
     } else if (pid > 0) {
-        // Processus père : envoi des messages
+        // Processus père : envoi des messages et réception des messages du fils
+        int choice;
+        // Lancer le thread pour gérer les messages reçus du fils
+        if (fork() == 0) {
+            handle_received_message();
+        }
+
         while (1) {
-            int choice;
             printf("1. Envoyer un message CAN\n");
             printf("2. Quitter\n");
             printf("Choisissez une option: ");
